@@ -1,0 +1,25 @@
+name: Gofile Keep-Alive
+
+on:
+  schedule:
+    # This runs at 00:00 every 5th day of the month
+    - cron: '0 0 */5 * *'
+  workflow_dispatch:
+    # This allows you to run it manually whenever you want
+
+jobs:
+  ping-links:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ping Gofile Links
+        run: |
+          while IFS= read -r link || [ -n "$link" ]; do
+            if [ -z "$link" ]; then continue; f
+            echo "Accessing: $link"
+            # We use --range 0-1024 to only "start" the download (first 1KB)
+            # This triggers activity without wasting GitHub bandwidth
+            curl -L --range 0-1024 "$link" -o /dev/null -s
+          done < links.txt
