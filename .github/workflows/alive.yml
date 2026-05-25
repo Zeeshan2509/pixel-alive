@@ -1,25 +1,25 @@
-name: Gofile Keep-Alive
+name: Pixeldrain Keep-Alive
 
 on:
   schedule:
-    # This runs at 00:00 every 5th day of the month
+    # Runs every 5 days to reset the 60-day timer
     - cron: '0 0 */5 * *'
   workflow_dispatch:
-    # This allows you to run it manually whenever you want
 
 jobs:
-  ping-links:
+  refresh:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Ping Gofile Links
+      - name: Refresh Pixeldrain Links
         run: |
-          while IFS= read -r link || [ -n "$link" ]; do
-            if [ -z "$link" ]; then continue; f
-            echo "Accessing: $link"
-            # We use --range 0-1024 to only "start" the download (first 1KB)
-            # This triggers activity without wasting GitHub bandwidth
-            curl -L --range 0-1024 "$link" -o /dev/null -s
+          while IFS= read -r line || [ -n "$line" ]; do
+            # Extract the ID (part after /l/)
+            ID=$(echo "$line" | sed 's/.*\/l\///' | tr -d '[:space:]')
+            if [ -z "$ID" ]; then continue; fi
+            echo "Refreshing folder: $ID"
+            # Access the info API which updates 'last_viewed'
+            curl -s "https://pixeldrain.com/api/fileset/$ID" > /dev/null
           done < links.txt
