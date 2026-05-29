@@ -5,47 +5,61 @@ on:
     # Runs at 00:00 every 5th day of the month
     - cron: '0 0 */5 * *'
   workflow_dispatch:
-    # Allows you to click "Run workflow" manually to test it
 
 jobs:
-  refresh-albums:
+  refresh-links:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Process Albums and Ping Files
+      - name: Refresh Albums and Ping Files
         run: |
+          # Check if links.txt exists
+          if [ ! -f links.txt ]; then
+            echo "❌ links.txt not found!"
+            exit 1
+          fi
+
           # Read links.txt line by line
           while IFS= read -r line || [ -n "$line" ]; do
-            # Skip empty lines
             [ -z "$line" ] && continue
             
-            # Extract ID from https://pixeldrain.com/l/pqw141Rd
-            ALBUM_ID=$(echo "$line" | sed 's|.*/l/||' | sed 's|/||g' | tr -d '[:space:]')
+            # Extract Album ID from the link
+            ALBUM_ID=$(echo "$line" | sed 's|.*/l/||' | tr -d '[:space:]')
             
-            echo "📂 Opening Album: $ALBUM_ID"
-
-            # Fetch the list of file IDs inside this album
-            # The API returns JSON; we use 'jq' to extract the 'id' field for each file
+            # Fetch Album Metadata from Pixeldrain API
             RESPONSE=$(curl -s "https://pixeldrain.com/api/list/$ALBUM_ID")
-            FILE_IDS=$(echo "$RESPONSE" | jq -r '.files[].id' 2>/dev/null)
-
-            if [ -z "$FILE_IDS" ] || [ "$FILE_IDS" == "null" ]; then
-              echo "❌ Error: Could not find files for album $ALBUM_ID. (Check if link is correct)"
+            
+            # Get the Album Title
+            ALBUM_NAME=$(echo "$RESPONSE" | jq -r '.title')
+            
+            if [ "$ALBUM_NAME" == "null" ] || [ -z "$ALBUM_NAME" ]; then
+              echo "⚠️  Could not find Album with ID: $ALBUM_ID"
               continue
             fi
 
-            # Loop through every file in the album
-            for FID in $FILE_IDS; do
-              echo "  ⚡ Pinging file: $FID"
+            echo "📂 Processing Album: $ALBUM_NAME"
+
+            # Get list of File IDs and Names separated by a pipe (|)
+            # Example: id1|E01 Winter is Coming.mkv
+            FILES=$(echo "$RESPONSE" | jq -r '.files[] | "\(.id)|\(.name)"')
+
+            while f_line= read -r f_data; do
+              # Split the ID and Name
+              FID=$(echo "$f_data" | cut -d'|' -f1)
+              FULL_NAME=$(echo "$f_data" | cut -d'|' -f2)
               
-              # --range 0-1024 downloads only the first 1KB
-              # This triggers Pixeldrain's "Last Accessed" update without downloading the whole MKV
-              # -L follows redirects, -s is silent, -o /dev/null throws away the data
-              curl -s -L --range 0-1024 "https://pixeldrain.com/api/file/$FID" -o /dev/null -w "     Status: %{http_code}\n"
-            done
+              # Remove the .mkv extension for the log
+              CLEAN_NAME=$(echo "$FULL_NAME" | sed 's/\.mkv$//')
+              
+              echo "  ⚡ Pinging: $CLEAN_NAME"
+              
+              # Access first 1KB to reset Pixeldrain's 60-day timer
+              curl -s -L --range 0-1024 "https://pixeldrain.com/api/file/$FID" -o /dev/null
+              
+            done <<< "$FILES"
             
-            echo "✅ Finished refreshing Album: $ALBUM_ID"
+            echo "✅ $ALBUM_NAME refreshed successfully."
             echo "------------------------------------------"
           done < links.txt
