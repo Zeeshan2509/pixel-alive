@@ -1,25 +1,51 @@
-name: Pixeldrain Keep-Alive
+name: Pixeldrain Album Keep-Alive
 
 on:
   schedule:
-    # Runs every 5 days to reset the 60-day timer
+    # Runs at 00:00 every 5th day of the month
     - cron: '0 0 */5 * *'
   workflow_dispatch:
+    # Allows you to click "Run workflow" manually to test it
 
 jobs:
-  refresh:
+  refresh-albums:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Refresh Pixeldrain Links
+      - name: Process Albums and Ping Files
         run: |
+          # Read links.txt line by line
           while IFS= read -r line || [ -n "$line" ]; do
-            # Extract the ID (part after /l/)
-            ID=$(echo "$line" | sed 's/.*\/l\///' | tr -d '[:space:]')
-            if [ -z "$ID" ]; then continue; fi
-            echo "Refreshing folder: $ID"
-            # Access the info API which updates 'last_viewed'
-            curl -s "https://pixeldrain.com/api/fileset/$ID" > /dev/null
+            # Skip empty lines
+            [ -z "$line" ] && continue
+            
+            # Extract ID from https://pixeldrain.com/l/pqw141Rd
+            ALBUM_ID=$(echo "$line" | sed 's|.*/l/||' | sed 's|/||g' | tr -d '[:space:]')
+            
+            echo "📂 Opening Album: $ALBUM_ID"
+
+            # Fetch the list of file IDs inside this album
+            # The API returns JSON; we use 'jq' to extract the 'id' field for each file
+            RESPONSE=$(curl -s "https://pixeldrain.com/api/list/$ALBUM_ID")
+            FILE_IDS=$(echo "$RESPONSE" | jq -r '.files[].id' 2>/dev/null)
+
+            if [ -z "$FILE_IDS" ] || [ "$FILE_IDS" == "null" ]; then
+              echo "❌ Error: Could not find files for album $ALBUM_ID. (Check if link is correct)"
+              continue
+            fi
+
+            # Loop through every file in the album
+            for FID in $FILE_IDS; do
+              echo "  ⚡ Pinging file: $FID"
+              
+              # --range 0-1024 downloads only the first 1KB
+              # This triggers Pixeldrain's "Last Accessed" update without downloading the whole MKV
+              # -L follows redirects, -s is silent, -o /dev/null throws away the data
+              curl -s -L --range 0-1024 "https://pixeldrain.com/api/file/$FID" -o /dev/null -w "     Status: %{http_code}\n"
+            done
+            
+            echo "✅ Finished refreshing Album: $ALBUM_ID"
+            echo "------------------------------------------"
           done < links.txt
