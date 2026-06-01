@@ -41,22 +41,31 @@ jobs:
 
             echo "📂 Processing Album: $ALBUM_NAME"
 
-            # Get list of File IDs and Names separated by a pipe (|)
-            # Example: id1|E01 Winter is Coming.mkv
-            FILES=$(echo "$RESPONSE" | jq -r '.files[] | "\(.id)|\(.name)"')
+            # Get list of File IDs, Names, and Sizes separated by a pipe (|)
+            FILES=$(echo "$RESPONSE" | jq -r '.files[] | "\(.id)|\(.name)|\(.size)"')
 
-            while f_line= read -r f_data; do
-              # Split the ID and Name
+            while IFS= read -r f_data; do
+              [ -z "$f_data" ] && continue
+
+              # Split the ID, Name, and Size
               FID=$(echo "$f_data" | cut -d'|' -f1)
               FULL_NAME=$(echo "$f_data" | cut -d'|' -f2)
+              FSIZE=$(echo "$f_data" | cut -d'|' -f3)
               
               # Remove the .mkv extension for the log
               CLEAN_NAME=$(echo "$FULL_NAME" | sed 's/\.mkv$//')
               
-              echo "  ⚡ Pinging: $CLEAN_NAME"
+              # Safely calculate 12% of the file size (or fallback to 1KB if missing)
+              if [ -z "$FSIZE" ] || [ "$FSIZE" == "null" ] || [ "$FSIZE" -eq 0 ]; then
+                TARGET_BYTES=1024
+                echo "  ⚡ Pinging: $CLEAN_NAME (Size missing, fallback 1KB)"
+              else
+                TARGET_BYTES=$(( FSIZE * 12 / 100 ))
+                echo "  ⚡ Downloading 12% ($TARGET_BYTES bytes) of: $CLEAN_NAME"
+              fi
               
-              # Access first 1KB to reset Pixeldrain's 60-day timer
-              curl -s -L --range 0-1024 "https://pixeldrain.com/api/file/$FID" -o /dev/null
+              # Download exactly the targeted byte range to /dev/null
+              curl -s -L --range 0-$TARGET_BYTES "https://pixeldrain.com/api/file/$FID" -o /dev/null
               
             done <<< "$FILES"
             
