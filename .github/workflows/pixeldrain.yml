@@ -2,7 +2,7 @@ name: Pixeldrain Album Keep-Alive
 
 on:
   schedule:
-    - cron: '0 0 1 * *' 
+    - cron: '0 0 1 * *'  
   workflow_dispatch:
 
 jobs:
@@ -14,25 +14,31 @@ jobs:
 
       - name: Refresh Albums and Ping Files
         run: |
-          # Check if links.txt exists
           if [ ! -f links.txt ]; then
             echo "❌ links.txt not found!"
             exit 1
           fi
 
-          # Read links.txt line by line
+          # --- Filter only Pixeldrain links ---
+          PD_LINKS=$(grep -i "pixeldrain\.com" links.txt || true)
+
+          if [ -z "$PD_LINKS" ]; then
+            echo "⚠️  No Pixeldrain links found in links.txt"
+            exit 0
+          fi
+
           while IFS= read -r line || [ -n "$line" ]; do
             [ -z "$line" ] && continue
-            
+
             # Extract Album ID from the link
             ALBUM_ID=$(echo "$line" | sed 's|.*/l/||' | tr -d '[:space:]')
-            
+
             # Fetch Album Metadata from Pixeldrain API
             RESPONSE=$(curl -s "https://pixeldrain.com/api/list/$ALBUM_ID")
-            
+
             # Get the Album Title
             ALBUM_NAME=$(echo "$RESPONSE" | jq -r '.title')
-            
+
             if [ "$ALBUM_NAME" == "null" ] || [ -z "$ALBUM_NAME" ]; then
               echo "⚠️  Could not find Album with ID: $ALBUM_ID"
               continue
@@ -47,27 +53,31 @@ jobs:
               [ -z "$f_data" ] && continue
 
               # Split the ID, Name, and Size
-              FID=$(echo "$f_data" | cut -d'|' -f1)
+              FID=$(echo "$f_data"       | cut -d'|' -f1)
               FULL_NAME=$(echo "$f_data" | cut -d'|' -f2)
-              FSIZE=$(echo "$f_data" | cut -d'|' -f3)
-              
+              FSIZE=$(echo "$f_data"     | cut -d'|' -f3)
+
               # Remove the .mkv extension for the log
               CLEAN_NAME=$(echo "$FULL_NAME" | sed 's/\.mkv$//')
-              
+
               # Safely calculate 12% of the file size (or fallback to 1KB if missing)
-              if [ -z "$FSIZE" ] || [ "$FSIZE" == "null" ] || [ "$FSIZE" -eq 0 ]; then
+              if [ -z "$FSIZE" ] || [ "$FSIZE" == "null" ] || [ "$FSIZE" -eq 0 ] 2>/dev/null; then
                 TARGET_BYTES=1024
                 echo "  ⚡ Pinging: $CLEAN_NAME (Size missing, fallback 1KB)"
               else
                 TARGET_BYTES=$(( FSIZE * 12 / 100 ))
                 echo "  ⚡ Downloading 12% ($TARGET_BYTES bytes) of: $CLEAN_NAME"
               fi
-              
+
               # Download exactly the targeted byte range to /dev/null
-              curl -s -L --range 0-$TARGET_BYTES "https://pixeldrain.com/api/file/$FID" -o /dev/null
-              
+              curl -s -L --range "0-$TARGET_BYTES" "https://pixeldrain.com/api/file/$FID" -o /dev/null
+
             done <<< "$FILES"
-            
+
             echo "✅ $ALBUM_NAME refreshed successfully."
             echo "------------------------------------------"
-          done < links.txt
+
+          done <<< "$PD_LINKS"
+
+          echo ""
+          echo "🎉 Pixeldrain keep-alive run complete."
