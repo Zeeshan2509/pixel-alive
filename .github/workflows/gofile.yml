@@ -1,0 +1,112 @@
+name: Gofile Keep-Alive
+
+on:
+  schedule:
+    - cron: '0 0 */5 * *'  # Every 5 days
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ping Gofile Files (12% download)
+        run: |
+          if [ ! -f links.txt ]; then
+            echo "❌ links.txt not found!"
+            exit 1
+          fi
+
+          # --- Get a guest token from Gofile ---
+          echo "🔑 Obtaining Gofile guest token..."
+          TOKEN_RESPONSE=$(curl -s -X POST "https://api.gofile.io/accounts")
+          GOFILE_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.data.token')
+
+          if [ -z "$GOFILE_TOKEN" ] || [ "$GOFILE_TOKEN" == "null" ]; then
+            echo "❌ Could not obtain Gofile token. Aborting."
+            exit 1
+          fi
+          echo "✅ Token obtained."
+
+          # --- Filter only Gofile links ---
+          GOFILE_LINKS=$(grep -i "gofile\.io" links.txt || true)
+
+          if [ -z "$GOFILE_LINKS" ]; then
+            echo "⚠️  No Gofile links found in links.txt"
+            exit 0
+          fi
+
+          while IFS= read -r line || [ -n "$line" ]; do
+            [ -z "$line" ] && continue
+
+            # Extract folder ID from link (e.g. https://gofile.io/d/ABCD1234)
+            FOLDER_ID=$(echo "$line" | sed 's|.*gofile\.io/d/||' | tr -d '[:space:]')
+
+            echo ""
+            echo "📂 Processing folder ID: $FOLDER_ID"
+
+            # Fetch folder contents
+            RESPONSE=$(curl -s \
+              -H "Authorization: Bearer $GOFILE_TOKEN" \
+              "https://api.gofile.io/contents/$FOLDER_ID?wt=4fd6sg89d7s6&cache=300")
+
+            STATUS=$(echo "$RESPONSE" | jq -r '.status')
+            if [ "$STATUS" != "ok" ]; then
+              echo "  ⚠️  Could not access folder $FOLDER_ID (status: $STATUS)"
+              continue
+            fi
+
+            FOLDER_NAME=$(echo "$RESPONSE" | jq -r '.data.name')
+            echo "  📁 Folder: $FOLDER_NAME"
+
+            # Extract files: id|name|size|link
+            FILES=$(echo "$RESPONSE" | jq -r \
+              '.data.children | to_entries[] | select(.value.type == "file") | "\(.value.id)|\(.value.name)|\(.value.size)|\(.value.link)"')
+
+            if [ -z "$FILES" ]; then
+              echo "  ⚠️  No files found in this folder."
+              continue
+            fi
+
+            while IFS= read -r f_data; do
+              [ -z "$f_data" ] && continue
+
+              FID=$(echo "$f_data"       | cut -d'|' -f1)
+              FULL_NAME=$(echo "$f_data" | cut -d'|' -f2)
+              FSIZE=$(echo "$f_data"     | cut -d'|' -f3)
+              DLINK=$(echo "$f_data"     | cut -d'|' -f4)
+
+              CLEAN_NAME=$(echo "$FULL_NAME" | sed 's/\.mkv$//')
+
+              if [ -z "$FSIZE" ] || [ "$FSIZE" == "null" ] || [ "$FSIZE" -eq 0 ] 2>/dev/null; then
+                TARGET_BYTES=1024
+                echo "  ⚡ Pinging: $CLEAN_NAME (size unknown, using 1KB fallback)"
+              else
+                TARGET_BYTES=$(( FSIZE * 12 / 100 ))
+                echo "  ⚡ Downloading 12% ($TARGET_BYTES bytes) of: $CLEAN_NAME"
+              fi
+
+              # Use the direct link from the API response if available, fallback to download endpoint
+              if [ -n "$DLINK" ] && [ "$DLINK" != "null" ]; then
+                DOWNLOAD_URL="$DLINK"
+              else
+                DOWNLOAD_URL="https://api.gofile.io/contents/$FID/download"
+              fi
+
+              curl -s -L \
+                -H "Authorization: Bearer $GOFILE_TOKEN" \
+                --range "0-$TARGET_BYTES" \
+                "$DOWNLOAD_URL" \
+                -o /dev/null
+
+            done <<< "$FILES"
+
+            echo "  ✅ $FOLDER_NAME refreshed."
+            echo "  ------------------------------------------"
+
+          done <<< "$GOFILE_LINKS"
+
+          echo ""
+          echo "🎉 Gofile keep-alive run complete."
