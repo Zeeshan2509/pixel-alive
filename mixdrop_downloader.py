@@ -46,19 +46,30 @@ async def ping_mixdrop_links(links_file="../links.txt"):
                 print("⏳ Waiting 5 seconds for timer to finish...")
                 await asyncio.sleep(5)
                 
-                print("⬇️ Clicking button again to start download stream...")
+                print("🔍 Extracting download URL from button...")
                 try:
-                    async with page.expect_download(timeout=60000) as download_info:
-                        await page.locator(".btn3").first.click()
+                    # After 5s, the button gets an 'href' attribute
+                    btn_locator = page.locator(".btn3").first
+                    direct_url = await btn_locator.get_attribute("href")
+                    
+                    if direct_url and direct_url != "javascript:void(0)":
+                        print(f"🔗 Found direct URL: {direct_url}")
                         
-                    download = await download_info.value
-                    print(f"📥 Started stream for: {download.suggested_filename}...")
-                    
-                    print("⏳ Pinging stream for 15 seconds...")
-                    await asyncio.sleep(15)
-                    
-                    await download.cancel()
-                    print(f"✅ Successfully pinged and cancelled: {download.suggested_filename}")
+                        # Tell Playwright to intercept the actual file download stream from this URL
+                        async with page.expect_download(timeout=60000) as download_info:
+                            await page.goto(direct_url)
+                            
+                        download = await download_info.value
+                        print(f"📥 Started stream for: {download.suggested_filename}...")
+                        
+                        print("⏳ Pinging stream for 15 seconds...")
+                        await asyncio.sleep(15)
+                        
+                        await download.cancel()
+                        print(f"✅ Successfully pinged and cancelled: {download.suggested_filename}")
+                    else:
+                        print(f"❌ Failed to find a valid href on the button. Attribute was: {direct_url}")
+                        
                 except Exception as e:
                     print(f"❌ Failed to intercept stream for {url}: {e}")
                     

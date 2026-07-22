@@ -37,10 +37,10 @@ async def ping_gofile_links(links_file="links.txt"):
                 
                 print("⏳ Waiting for Gofile items to load...")
                 # Wait for at least one download button to appear
-                await page.wait_for_selector(".item_download", timeout=60000)
+                await page.wait_for_selector("button.item_download", timeout=60000)
                 
                 # Get all buttons with the class item_download
-                buttons = await page.locator(".item_download").all()
+                buttons = await page.locator("button.item_download").all()
                 print(f"🎯 Found {len(buttons)} download buttons on this page!")
                 
                 for i, button in enumerate(buttons):

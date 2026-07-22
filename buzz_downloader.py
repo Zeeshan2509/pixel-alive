@@ -1,9 +1,8 @@
-import asyncio
 import os
-import re
-from playwright.async_api import async_playwright
+import time
+from curl_cffi import requests
 
-async def ping_buzzheavier_links(links_file="links.txt"):
+def ping_buzzheavier_links(links_file="../links.txt"):
     print(f"🚀 Starting Buzzheavier Keep-Alive Pinger...")
     
     # 1. Read Buzzheavier links from links.txt
@@ -24,43 +23,57 @@ async def ping_buzzheavier_links(links_file="links.txt"):
 
     print(f"📋 Found {len(urls)} Buzzheavier links to ping.")
     
-    async with async_playwright() as p:
-        # Run headless for GitHub Actions
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(accept_downloads=True)
-        page = await context.new_page()
-        
-        for url in urls:
-            print(f"\n🌐 Navigating to {url}...")
-            try:
-                await page.goto(url)
+    session = requests.Session(impersonate="chrome")
+    
+    for url in urls:
+        print(f"\n🌐 Pinging {url}...")
+        try:
+            # 1. Get the initial page to set cookies
+            session.get(url)
+            
+            # 2. Hit the HTMX download endpoint
+            file_id = url.rstrip("/").split("/")[-1]
+            download_url = f"https://buzzheavier.com/{file_id}/download"
+            
+            resp = session.get(
+                download_url,
+                headers={"HX-Request": "true", "HX-Current-URL": url},
+                allow_redirects=False
+            )
+            
+            redirect_url = resp.headers.get("HX-Redirect") or resp.headers.get("hx-redirect")
+            if redirect_url:
+                if redirect_url.startswith("/"):
+                    redirect_url = f"https://buzzheavier.com{redirect_url}"
                 
-                print("⏳ Waiting for Cloudflare and download button...")
-                await page.wait_for_selector(".download-btn", timeout=60000)
+                print(f"🔗 Found direct URL. Starting ping stream...")
                 
-                print("⬇️ Clicking download button...")
-                try:
-                    async with page.expect_download(timeout=60000) as download_info:
-                        await page.locator(".download-btn").first.click()
+                cookie_str = "; ".join([f"{k}={v}" for k, v in session.cookies.items()])
+                headers = {"Referer": url}
+                if cookie_str:
+                    headers["Cookie"] = cookie_str
+                    
+                # 3. Stream for 15 seconds to register as a download
+                start_time = time.time()
+                bytes_downloaded = 0
+                
+                stream_resp = session.get(redirect_url, stream=True, headers=headers)
+                
+                for chunk in stream_resp.iter_content(chunk_size=1024 * 1024):
+                    bytes_downloaded += len(chunk)
+                    if time.time() - start_time > 15:
+                        print(f"✅ Pinged successfully for 15s ({bytes_downloaded / 1024 / 1024:.2f} MB). Cancelling stream.")
+                        stream_resp.close()
+                        break
                         
-                    download = await download_info.value
-                    print(f"📥 Started stream for: {download.suggested_filename}...")
-                    
-                    # Wait 15 seconds to register as an active download on their servers
-                    print("⏳ Pinging stream for 15 seconds...")
-                    await asyncio.sleep(15)
-                    
-                    # Cancel it to save bandwidth and storage
-                    await download.cancel()
-                    print(f"✅ Successfully pinged and cancelled: {download.suggested_filename}")
-                except Exception as e:
-                    print(f"❌ Failed to ping {url}: {e}")
-                    
-            except Exception as e:
-                print(f"❌ Error processing {url}: {e}")
+            else:
+                print(f"❌ Failed to get direct URL for {url}. Server returned: {resp.text[:100]}")
                 
-        await browser.close()
-        print("\n🎉 All Buzzheavier links pinged successfully!")
+        except Exception as e:
+            print(f"❌ Error processing {url}: {e}")
+            
+    print("\n🎉 All Buzzheavier links pinged successfully!")
 
 if __name__ == "__main__":
-    asyncio.run(ping_buzzheavier_links("links.txt"))
+    target = "../links.txt" if os.path.exists("../links.txt") else "links.txt"
+    ping_buzzheavier_links(target)
