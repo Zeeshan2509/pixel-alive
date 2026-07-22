@@ -43,19 +43,20 @@ async def ping_mixdrop_links(links_file="../links.txt"):
                 print("⬇️ Clicking button to trigger 3s timer...")
                 await page.locator(".btn3").first.click()
                 
-                print("⏳ Waiting 5 seconds for timer to finish...")
-                await asyncio.sleep(5)
-                
-                print("🔍 Extracting download URL from button...")
+                print("⏳ Waiting up to 15s for the real link to generate...")
                 try:
-                    # After 5s, the button gets an 'href' attribute
+                    # Wait for Javascript to add the real href to the button
+                    await page.wait_for_function(
+                        "() => { const btn = document.querySelector('.btn3'); return btn && btn.hasAttribute('href') && btn.getAttribute('href').startsWith('http'); }",
+                        timeout=15000
+                    )
+                    
                     btn_locator = page.locator(".btn3").first
                     direct_url = await btn_locator.get_attribute("href")
                     
-                    if direct_url and direct_url != "javascript:void(0)":
+                    if direct_url:
                         print(f"🔗 Found direct URL: {direct_url}")
                         
-                        # Tell Playwright to intercept the actual file download stream from this URL
                         async with page.expect_download(timeout=60000) as download_info:
                             await page.goto(direct_url)
                             
