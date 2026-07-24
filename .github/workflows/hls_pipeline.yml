@@ -1,0 +1,46 @@
+name: HLS Pipeline - Auto Process & Upload
+
+on:
+  # Runs every 6.5 hours (gives ~30 min buffer after the previous run ends)
+  schedule:
+    - cron: '0 */7 * * *'
+  # Manual trigger
+  workflow_dispatch:
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355  # Just under the 6-hour hard limit
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 jsbeautifier internetarchive
+
+      - name: Install system tools (aria2, ffmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aria2 ffmpeg
+
+      - name: Run HLS Pipeline
+        run: python Automation/hls_pipeline.py
+
+      - name: Push progress (fallback)
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Progress.txt || true
+          git diff --cached --quiet || git commit -m "Update Progress.txt [skip ci]"
+          git push || true
